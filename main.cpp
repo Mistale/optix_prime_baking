@@ -75,6 +75,7 @@ struct Config {
   bool  use_cpu;
   bool  conserve_memory;
   bool  flip_orientation;
+  bool  output_per_index;
   std::string output_filename;
 
   Config( int argc, const char ** argv ) {
@@ -93,6 +94,7 @@ struct Config {
     use_cpu = false;
     conserve_memory = false;
     flip_orientation = false;
+	output_per_index = false;
 #ifdef EIGEN3_ENABLED
     filter_mode = bake::VERTEX_FILTER_LEAST_SQUARES;
 #else
@@ -204,6 +206,9 @@ struct Config {
       else if ( (arg == "--no_least_squares" ) ) {
         filter_mode = bake::VERTEX_FILTER_AREA_BASED;  
       }
+	  else if ((arg == "--output_per_index")) {
+		  output_per_index = true;
+	  }
       else if ( (arg == "-w" || arg == "--regularization_weight" ) && i+1 < argc ) {
         if( sscanf( argv[++i], "%f", &regularization_weight ) != 1 ) {
           printParseErrorAndExit( argv[0], arg, argv[i] );
@@ -272,6 +277,7 @@ struct Config {
 #ifdef EIGEN3_ENABLED
     << "  -w  | --regularization_weight <w>     Regularization weight for least squares, positive range. (default " << REGULARIZATION_WEIGHT << ")\n"
     << "        --no_least_squares              Disable least squares filtering\n"
+	<< "        --output_per_index              Write AO per triangle index instead of per vertex\n"
 #endif
     << std::endl
     << "Viewer keys:\n"
@@ -430,7 +436,7 @@ namespace {
     ao_samples.num_samples = 0;
   }
 
-  bool save_results(const char* outputfile, bake::Scene & scene, const float* const * ao_vertex)
+  bool save_results_for_vertices(const char* outputfile, bake::Scene & scene, const float* const * ao_vertex)
   {
     FILE* file = fopen(outputfile, "wb");
     if (!file) return false;
@@ -469,6 +475,54 @@ namespace {
     fclose(file);
 
     return true;
+  }
+
+  bool save_results_for_indices(const char* outputfile, bake::Scene & scene, const float* const * ao_vertex)
+  {
+	  FILE* file = fopen(outputfile, "wb");
+	  if (!file) return false;
+
+	  uint64_t numInstances = scene.num_instances;
+	  uint64_t numIndices = 0;
+
+	  for (size_t i = 0; i < scene.num_instances; i++) {
+		  numIndices += scene.meshes[scene.instances[i].mesh_index].num_triangles * 3;
+	  }
+
+	  // write header
+	  fwrite(&numInstances, sizeof(numInstances), 1, file);
+	  fwrite(&numIndices, sizeof(numIndices), 1, file);
+
+	  // write instances
+
+	  uint64_t indexOffset = 0;
+	  for (size_t i = 0; i < scene.num_instances; i++) {
+		  uint64_t identifier = scene.instances[i].storage_identifier;
+		  fwrite(&identifier, sizeof(identifier), 1, file);
+		  fwrite(&indexOffset, sizeof(indexOffset), 1, file);
+		  numIndices = scene.meshes[scene.instances[i].mesh_index].num_triangles * 3;
+		  fwrite(&numIndices, sizeof(numIndices), 1, file);
+
+		  indexOffset += numIndices;
+	  }
+
+	  // write indices
+	  for (size_t i = 0; i < scene.num_instances; i++) {
+		  bake::Mesh& mesh = scene.meshes[scene.instances[i].mesh_index];
+		  numIndices = mesh.num_triangles * 3;
+
+		  const float* ao_values = ao_vertex[i];
+
+		  for (size_t j = 0; j < numIndices; j++) {
+			  unsigned int vertex_index = mesh.tri_vertex_indices[j];
+			  fwrite(&ao_values[vertex_index], sizeof(float), 1, file);
+		  }
+	  }
+
+	  fflush(file);
+	  fclose(file);
+
+	  return true;
   }
 
   // Concat two scenes using shallow copies for all buffers
@@ -664,7 +718,11 @@ int sample_main( int argc, const char** argv )
     std::cerr << "Save vertex ao ...              "; std::cerr.flush();
     timer.reset();
     timer.start();
-    bool saved = save_results(config.output_filename.c_str(), scene, vertex_ao);
+
+	bool saved = config.output_per_index
+		? save_results_for_indices(config.output_filename.c_str(), scene, vertex_ao)
+		: save_results_for_vertices(config.output_filename.c_str(), scene, vertex_ao);
+    
     printTimeElapsed(timer);
     if (saved){
       std::cerr << "Saved vertex ao to: " << config.output_filename << std::endl;

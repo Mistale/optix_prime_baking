@@ -66,6 +66,10 @@ bool load_scene( const char* filename, bake::Scene& scene, float* scene_bbox_min
     return load_bk3d_scene(filename, scene, scene_bbox_min, scene_bbox_max, memory, num_instances_per_mesh);
   }
 
+  if (extension == ".bin") {
+	return load_bin_scene(filename, scene, scene_bbox_min, scene_bbox_max, memory, num_instances_per_mesh);
+  }
+
   std::cerr << "Unhandled filename extension: " << extension << ".  Attempting to load as bk3d" << std::endl;
   std::cerr << filename << std::endl;
   return load_bk3d_scene(filename, scene, scene_bbox_min, scene_bbox_max, memory, num_instances_per_mesh);
